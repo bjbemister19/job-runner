@@ -1,7 +1,7 @@
 /*
  * Job Runner
  *
- * Copyright (c) 2017 Brandon Bemister. All rights reserved.
+ * Copyright (c) 2018 Brandon Bemister. All rights reserved.
  * https://github.com/bjbemister19/job-runner
  *
  * The MIT License (MIT)
