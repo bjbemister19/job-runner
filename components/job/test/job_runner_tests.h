@@ -14,6 +14,7 @@ void job_runner_test_async_shutdown();
 void job_runner_test_rand_shutdown();
 #endif
 
+
 #endif //JOB_RUNNER_TESTING_ENABLE
 
 #endif //__JOB_RUNNER_TESTS__

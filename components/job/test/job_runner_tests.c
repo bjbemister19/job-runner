@@ -359,7 +359,7 @@ void job_runner_test_async_shutdown(){
 
         ESP_LOGI("job_runner_test","All Jobs Added, Starting Runner...");
 
-        err = job_runner_execute(runner, "test_run", 4096, 5);
+        err = job_runner_execute(runner, "test_run", 8192, 24);
 
     }
 

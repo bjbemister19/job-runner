@@ -28,9 +28,13 @@
 
 #include "stdint.h"
 
+
 #define JOB_RUNNER_SHUTDOWN_COMPLETE 1
 
 typedef enum {
+
+    JR_NOT_STARTED             =  -10,
+    JR_ALREADY_STARTED         =   -9,
     JR_INVALID_SHUTDOWN_CODE   =   -8,
     JR_TIMEOUT                 =   -7,
     JR_QUEUE_FULL              =   -6,
@@ -40,13 +44,16 @@ typedef enum {
     JR_MEMORY_ALLOC_FAIL       =   -2,
     JR_FAIL                    =   -1,
     JR_SUCCESS                 =    0
+
 } jrerr_t ;
 
 typedef enum {
+
     JOB_RUNNER_KEEP_ALIVE,
     JOB_RUNNER_IM_DONE,
     JOB_RUNNER_OK,
     JOB_RUNNER_SHUT_DOWN,
+
 } job_runner_state_t;
 
 typedef void* job_runner_shutdown_response_handle_t;

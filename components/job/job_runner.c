@@ -51,6 +51,7 @@ struct job_runner {
     job_runner_state_t state;
     xQueueHandle* cmd_queue;
     xQueueHandle* shutdown_resp_channel;
+    int8_t started;
 
 };
 
@@ -245,6 +246,14 @@ jrerr_t job_runner_add_job(struct job_runner* runner, void* job_callback, uint32
         err = JR_NULL_POINTER;
     }
 
+    if( err == JR_SUCCESS ){
+
+        if(runner->started){
+            err = JR_ALREADY_STARTED;
+        }
+
+    }
+
     if(err == JR_SUCCESS){
 
         new_job = malloc( sizeof(struct job_runner_job) );
@@ -279,11 +288,32 @@ jrerr_t job_runner_execute(struct job_runner* runner, const char* runner_name, u
 
     jrerr_t err = JR_SUCCESS;
 
-    BaseType_t crerr = xTaskCreate(__job_runner_task, runner_name, runner_stack, runner, priority, &runner->task_hnd);
-    if(crerr != pdPASS){
-        err = JR_FAIL;
+    if(runner == NULL || runner_name == NULL){
+
+        err = JR_NULL_POINTER;
+
     }
-    
+
+    if(err == JR_SUCCESS){
+
+        if(runner->started){
+            err = JR_ALREADY_STARTED;
+        }
+
+    }
+
+    if(err == JR_SUCCESS){
+
+        runner->started = 1;
+
+        BaseType_t crerr = xTaskCreate(&__job_runner_task, runner_name, runner_stack, runner, priority, &runner->task_hnd);
+        if(crerr != pdPASS){
+            runner->started = 0;
+            err = JR_FAIL;
+        }
+
+    }
+
     return err;
 
 }
@@ -294,6 +324,14 @@ jrerr_t job_runner_shutdown(struct job_runner* runner){
 
     if(runner == NULL){
         err = JR_NULL_POINTER;
+    }
+
+    if(err == JR_SUCCESS){
+
+        if( ! runner->started ){
+            err = JR_NOT_STARTED;
+        }
+    
     }
 
     if(err == JR_SUCCESS){
@@ -314,6 +352,12 @@ jrerr_t job_runner_shutdown(struct job_runner* runner){
     
     }
 
+    if( err == JR_SUCCESS ){
+
+        runner->started = 0;
+
+    }
+
     return err;
 
 }
@@ -325,6 +369,14 @@ jrerr_t job_runner_shutdown_async(struct job_runner* runner, job_runner_shutdown
 
     if(runner == NULL){
         err = JR_NULL_POINTER;
+    }
+
+    if(err == JR_SUCCESS){
+
+        if( ! runner->started ){
+            err = JR_NOT_STARTED;
+        }
+    
     }
 
     if(err == JR_SUCCESS){
@@ -361,6 +413,8 @@ jrerr_t job_runner_shutdown_async(struct job_runner* runner, job_runner_shutdown
     } 
     else {
         *shutdown_resp_channel = sd_resp_hnd;
+        runner->started = 0;
+
     }
 
     return err;
@@ -447,6 +501,7 @@ jrerr_t job_runner_create( struct job_runner** new_runner, uint32_t loop_delay )
         runner->jobs = NULL;
         runner->loop_delay = loop_delay;
         runner->state = JOB_RUNNER_OK;
+        runner->started = 0;
 
         runner->cmd_queue = xQueueCreate(5, sizeof(struct job_cmd));
         runner->shutdown_resp_channel = NULL;
