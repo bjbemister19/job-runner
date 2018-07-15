@@ -33,6 +33,7 @@
 
 typedef enum {
 
+    JR_JOB_NOT_EXIST           =  -11,
     JR_NOT_STARTED             =  -10,
     JR_ALREADY_STARTED         =   -9,
     JR_INVALID_SHUTDOWN_CODE   =   -8,
@@ -60,7 +61,9 @@ typedef void* job_runner_shutdown_response_handle_t;
 
 struct job_runner;
 
-jrerr_t job_runner_add_job(struct job_runner* runner, void* job_callback, uint32_t repeat_delay);
+jrerr_t job_runner_notify_job(struct job_runner* runner, int16_t job_id, void* notif_data, void (*notif_dtor)(void* nd) );
+
+jrerr_t job_runner_add_job(struct job_runner* runner, void* job_callback, uint32_t repeat_delay, int16_t* job_id);
 
 jrerr_t job_runner_execute();
 

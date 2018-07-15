@@ -35,9 +35,14 @@
 
 struct job_runner_job {
 
-    job_runner_state_t (*job_callback) (job_runner_state_t state);
+    job_runner_state_t (*job_callback) (job_runner_state_t state, void* data);
     TickType_t last_run;
     TickType_t repeat_delay;
+    int16_t job_id;
+    
+    int8_t notif;
+    void* notif_data;
+    void (*notif_dtor)(void* notif_data);
 
     struct job_runner_job* next;
 
@@ -56,18 +61,36 @@ struct job_runner {
 };
 
 enum cmd_type {
+
     JR_CMD_TYPE_SHUTDOWN,
+    JR_CMD_TYPE_NOTIFY
+
 };
 
 struct job_cmd {
 
     enum cmd_type type;
+    int16_t job_id;
     void* cmd_data;
     void (*cmd_dtor)(void* cmd_data);
 
 };
 
 static void __job_runner_free_job(struct job_runner_job* job){
+
+    if(job->notif_data){
+
+        if(job->notif_dtor){
+
+            job->notif_dtor(job->notif_data);
+            job->notif_dtor = NULL;
+        
+        }
+        
+        job->notif_data = NULL;
+
+    }
+
     SAFE_FREE(job);
 }
 
@@ -80,6 +103,123 @@ static void __job_runner_free_runner(struct job_runner* runner){
     }
 
     SAFE_FREE(runner);
+}
+
+static bool __job_runner_contains_job(struct job_runner* runner, int16_t job_id){
+
+    if(runner == NULL){
+        return false;
+    }
+
+    struct job_runner_job* start = runner->jobs;
+    
+    while( start != NULL ){
+
+        if(start->job_id == job_id){
+            return true;
+        }
+
+        start = start->next;
+
+    }
+
+    return false;
+
+}
+
+static jrerr_t __job_runner_find_job(struct job_runner* runner, struct job_runner_job** job, int16_t job_id){
+    
+    jrerr_t err = JR_SUCCESS;
+
+    if(runner == NULL || job == NULL){
+        err = JR_NULL_POINTER;
+    }
+
+    if(err == JR_SUCCESS){
+    
+        struct job_runner_job* start = runner->jobs;
+        
+        while( start != NULL ){
+
+            *job = NULL;
+
+            if(start->job_id == job_id){
+                *job = start;
+                break;
+            }
+
+            start = start->next;
+
+        }
+
+        if(job == NULL){
+            err = JR_JOB_NOT_EXIST;
+        }
+    
+    }
+
+    return err;
+
+}
+
+static jrerr_t __job_runner_assign_job_id(struct job_runner* runner, struct job_runner_job* job){
+
+    jrerr_t err = JR_SUCCESS;
+
+    if(runner == NULL || job == NULL){
+
+        err = JR_NULL_POINTER;
+
+    }
+
+    if(err == JR_SUCCESS){
+
+        int16_t id = 0;
+
+        while( __job_runner_contains_job(runner, id) ){
+
+            id++;
+
+        }
+
+        job->job_id = id;
+
+    }
+
+    return err;
+
+}
+
+static jrerr_t __job_runner_process_notification(struct job_runner* runner, struct job_cmd* cmd){
+
+    jrerr_t err = JR_SUCCESS;
+
+    struct job_runner_job* job = NULL;
+
+    if(runner == NULL || cmd == NULL){
+        err = JR_NULL_POINTER;
+    }
+
+    if(err == JR_SUCCESS){
+
+        err = __job_runner_find_job(runner, &job, cmd->job_id);
+    
+    }
+
+    if(err == JR_SUCCESS){
+
+        job->notif = 1;
+        job->notif_data = cmd->cmd_data;
+        job->notif_dtor = cmd->cmd_dtor;
+
+        // Pass ownership of this data onto the notification system. 
+        cmd->cmd_data = NULL;
+        cmd->cmd_dtor = NULL;
+
+    }
+
+    return err;
+
 }
 
 static jrerr_t __job_runner_process_current(struct job_runner* runner, struct job_runner_job** in_current, struct job_runner_job** in_previous){
@@ -103,9 +243,9 @@ static jrerr_t __job_runner_process_current(struct job_runner* runner, struct jo
     TickType_t now = xTaskGetTickCount();
     TickType_t elapsed = now - current->last_run;
 
-    if( (elapsed >= current->repeat_delay) || (runner->state == JOB_RUNNER_SHUT_DOWN) ){
+    if( (elapsed >= current->repeat_delay) || current->notif || (runner->state == JOB_RUNNER_SHUT_DOWN) ){
 
-        job_runner_state_t job_state = current->job_callback(runner->state);
+        job_runner_state_t job_state = current->job_callback(runner->state, current->notif_data);
         if(job_state == JOB_RUNNER_IM_DONE){
             if(previous == NULL){
                 // We must be at the head
@@ -128,6 +268,20 @@ static jrerr_t __job_runner_process_current(struct job_runner* runner, struct jo
             current->last_run = xTaskGetTickCount();
             *in_previous = current;
             *in_current = current->next;
+
+            current->notif = 0;
+            if(current->notif_data){
+
+                if(current->notif_dtor){
+
+                    current->notif_dtor(current->notif_data);
+                    current->notif_dtor = NULL;
+                
+                }
+                
+                current->notif_data = NULL;
+
+            }
 
         }
 
@@ -161,6 +315,7 @@ static jrerr_t __job_runner_process_command(struct job_runner* runner){
     if(rcvd == pdTRUE){
         // Process New Command
         switch(cmd.type){
+
             case JR_CMD_TYPE_SHUTDOWN:
 
                 runner->state = JOB_RUNNER_SHUT_DOWN;
@@ -173,6 +328,18 @@ static jrerr_t __job_runner_process_command(struct job_runner* runner){
 
                 break;
             
+            case JR_CMD_TYPE_NOTIFY:
+
+                err = __job_runner_process_notification(runner, &cmd);
+                if(err == JR_JOB_NOT_EXIST){
+                    ESP_LOGE("Job Runner","Job Not Exist");
+
+                    // Return Success so job runner does not get shut down. 
+                    err = JR_SUCCESS;
+                }
+
+                break;
+
             default:
                 err = JR_INVALID_CMD;
                 break;
@@ -226,8 +393,10 @@ static void __job_runner_task( void* params ) {
     ESP_LOGI("__job_runner_task","No More Jobs, Shutting Down Runner!!!");
 
     if(runner->shutdown_resp_channel != NULL){
+
         const int resp = JOB_RUNNER_SHUTDOWN_COMPLETE;
         xQueueSend(runner->shutdown_resp_channel, &resp, portMAX_DELAY);
+    
     }
 
     __job_runner_free_runner(runner);
@@ -236,7 +405,39 @@ static void __job_runner_task( void* params ) {
 
 }
 
-jrerr_t job_runner_add_job(struct job_runner* runner, void* job_callback, uint32_t repeat_delay) {
+jrerr_t job_runner_notify_job(struct job_runner* runner, int16_t job_id, void* notif_data, void (*notif_dtor)(void* nd) ){
+
+    jrerr_t err = JR_SUCCESS;
+
+    if(runner == NULL){
+
+        err = JR_NULL_POINTER;
+
+    }
+
+    if(err == JR_SUCCESS){
+
+        if(runner->cmd_queue == NULL){
+            err = JR_NULL_POINTER;
+        }
+
+    }
+
+    if(err == JR_SUCCESS){
+
+        struct job_cmd cmd = { .type = JR_CMD_TYPE_NOTIFY, .job_id = job_id, .cmd_data = notif_data, .cmd_dtor = notif_dtor };
+        BaseType_t sderr = xQueueSend(runner->cmd_queue, &cmd, portMAX_DELAY);
+        if(sderr != pdTRUE){
+            err = JR_QUEUE_FULL;
+        }
+    
+    }
+
+    return err;
+
+}
+
+jrerr_t job_runner_add_job(struct job_runner* runner, void* job_callback, uint32_t repeat_delay, int16_t* job_id) {
 
     jrerr_t err = JR_SUCCESS;
 
@@ -268,6 +469,19 @@ jrerr_t job_runner_add_job(struct job_runner* runner, void* job_callback, uint32
         new_job->job_callback = job_callback;
         new_job->last_run = 0;
         new_job->repeat_delay = repeat_delay;
+        new_job->notif = 0;
+        new_job->notif_data = NULL;
+        new_job->notif_dtor = NULL;
+
+        err = __job_runner_assign_job_id(runner, new_job);
+
+    }
+
+    if(err == JR_SUCCESS){
+
+        if(job_id != NULL){
+            *job_id = new_job->job_id;
+        }
 
         new_job->next = runner->jobs;
         runner->jobs = new_job;

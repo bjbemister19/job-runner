@@ -8,6 +8,6 @@
 void app_main()
 {
 
-    job_runner_test_async_shutdown();
+    job_runner_test_notifications();
 
 }
